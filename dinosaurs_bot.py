@@ -105,64 +105,18 @@ def create_bot(config):
         nonlocal scoreboard_message_id
         print(f"✅ {bot.user} is online!")
 
-        channel = bot.get_channel(channel_id)
-        async for msg in channel.history(limit=10):
-            if msg.author == bot.user and f"**🏆 UGT {bot_name.capitalize()}'s Scoreboard**" in msg.content:
-                scoreboard_message_id = msg.id
-                break
-        if scoreboard_message_id is None:
-            msg = await channel.send(generate_scoreboard())
-            scoreboard_message_id = msg.id
+        # Sync commands only once
+        if not synced:
+            await tree.sync()
+            print(f"✅ Slash commands synced")
+            synced = True
 
-        await tree.sync()
-        print(f"✅ Slash commands synced")
-
-        # Optional: Add a delay after syncing to avoid rate-limiting
+        # Optional: Add a delay to prevent rate-limiting
         await asyncio.sleep(3)  # Sleep to space out requests
 
+    # Commands
     group = app_commands.Group(name=bot_name, description=f"{bot_name.capitalize()} scoreboard commands")
     tree.add_command(group)
 
     @group.command(name="add_maps")
-    async def add_maps(interaction: discord.Interaction, map_wins: int, map_losses: int):
-        if not has_role(interaction.user):
-            await interaction.response.send_message("❌ No permission", ephemeral=True)
-            return
-        scoreboard_data["map_wins"] += map_wins
-        scoreboard_data["map_losses"] += map_losses
-        scoreboard_data["wins"] += map_wins > map_losses
-        scoreboard_data["losses"] += map_wins < map_losses
-        save_scoreboard()
-
-        # Optional: Add a delay before updating scoreboard
-        await asyncio.sleep(1)  # Sleep before proceeding with the update
-        await update_scoreboard()
-        await interaction.response.send_message("✅ Match added", ephemeral=True)
-
-    @group.command(name="reset")
-    async def reset_scoreboard(interaction: discord.Interaction):
-        if not is_admin(interaction.user):
-            await interaction.response.send_message("❌ Only admins can reset the scoreboard.", ephemeral=True)
-            return
-        scoreboard_data.update({"wins": 0, "losses": 0, "map_wins": 0, "map_losses": 0})
-        save_scoreboard()
-
-        # Optional: Add a delay before updating scoreboard
-        await asyncio.sleep(1)  # Sleep before proceeding with the update
-        await update_scoreboard()
-        await interaction.response.send_message("🧹 Scoreboard reset", ephemeral=True)
-
-    return bot, config["token_env"]
-
-# ---------------- MAIN ----------------
-async def main():
-    tasks = []
-    for cfg in BOTS_CONFIG:
-        bot, token_env = create_bot(cfg)
-        token = os.getenv(token_env)
-        if not token:
-            print(f"⚠️ Token for {cfg['name']} not found in environment variables!")
-        tasks.append(asyncio.create_task(bot.start(token)))
-    await asyncio.gather(*tasks)
-
-asyncio.run(main())
+    async def add_maps
