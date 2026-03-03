@@ -8,22 +8,20 @@ from flask import Flask
 from threading import Thread
 
 # ---------------- CONFIG ----------------
-SCOREBOARD = {"name": "dinosaurs", "scoreboard_file": "dinosaurs_scoreboard.json", "channel_id": 1440123400524791921}
+BOTS_CONFIG = [
+    {"name": "dinosaurs", "token_env": "DISCORD_TOKEN_DINOSAURS", "scoreboard_file": "dinosaurs_scoreboard.json", "channel_id": 1440123400524791921}
+]
+
 ALLOWED_ROLES = ["admin", "captains"]
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 os.makedirs(DATA_DIR, exist_ok=True)
-
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN_DINOSAURS")  # Environment variable for this bot's token
-
-if not DISCORD_TOKEN:
-    raise Exception("DISCORD_TOKEN_DINOSAURS is missing!")
 
 # ---------------- FLASK KEEP-ALIVE ----------------
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Dinosaurs bot is running!"
+    return "Dinosaur bot is running!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8000))
@@ -36,127 +34,135 @@ def keep_alive():
 
 keep_alive()
 
-# ---------------- BOT ----------------
-intents = discord.Intents.default()
-intents.guilds = True
-intents.members = True
-intents.message_content = True
+# ---------------- BOT FACTORY ----------------
+def create_bot(config):
+    intents = discord.Intents.default()
+    intents.guilds = True
+    intents.members = True
+    intents.message_content = True
 
-bot = commands.Bot(command_prefix=None, intents=intents)
-tree = bot.tree
+    bot = commands.Bot(command_prefix=None, intents=intents)
+    tree = bot.tree
 
-# ---------------- LOAD SCOREBOARD ----------------
-scoreboard_path = os.path.join(DATA_DIR, SCOREBOARD["scoreboard_file"])
+    scoreboard_path = os.path.join(DATA_DIR, config["scoreboard_file"])
+    channel_id = config["channel_id"]
+    bot_name = config["name"]
 
-if not os.path.exists(scoreboard_path):
-    with open(scoreboard_path, "w") as f:
-        json.dump({"wins":0,"losses":0,"map_wins":0,"map_losses":0}, f)
+    if not os.path.exists(scoreboard_path):
+        with open(scoreboard_path, "w") as f:
+            json.dump({"wins": 0, "losses": 0, "map_wins": 0, "map_losses": 0}, f)
 
-def load_scoreboard():
-    with open(scoreboard_path, "r") as f:
-        return json.load(f)
+    def load_scoreboard():
+        with open(scoreboard_path, "r") as f:
+            return json.load(f)
 
-def save_scoreboard():
-    with open(scoreboard_path, "w") as f:
-        json.dump(scoreboard_data, f)
+    def save_scoreboard():
+        with open(scoreboard_path, "w") as f:
+            json.dump(scoreboard_data, f)
 
-scoreboard_data = load_scoreboard()
-scoreboard_message_id = None
+    scoreboard_data = load_scoreboard()
+    scoreboard_message_id = None
 
-# ---------------- UTILITY FUNCTIONS ----------------
-def get_ratio(w,l):
-    if l==0: return f"{w:.2f}" if w>0 else "0"
-    return f"{w/l:.2f}"
+    def has_role(member):
+        return any(role.name.lower() in ALLOWED_ROLES for role in member.roles)
 
-def get_map_win_percent(mw,ml):
-    t = mw + ml
-    return "0%" if t == 0 else f"{(mw/t) * 100:.1f}%"
+    def is_admin(member):
+        return any(role.name.lower() == "admin" for role in member.roles)
 
-def has_role(member):
-    return any(role.name.lower() in ALLOWED_ROLES for role in member.roles)
+    def get_ratio(w, l):
+        if l == 0:
+            return f"{w:.2f}" if w > 0 else "0"
+        return f"{w / l:.2f}"
 
-def is_admin(member):
-    return any(role.name.lower() == "admin" for role in member.roles)
+    def get_map_win_percent(mw, ml):
+        t = mw + ml
+        return "0%" if t == 0 else f"{(mw / t) * 100:.1f}%"
 
-def generate_scoreboard():
-    return (
-        f"**🏆 UGT {SCOREBOARD['name'].capitalize()}'s Scoreboard**\n"
-        f"Wins: {scoreboard_data['wins']}\n"
-        f"Losses: {scoreboard_data['losses']}\n"
-        f"W/L Ratio: {get_ratio(scoreboard_data['wins'],scoreboard_data['losses'])}\n"
-        f"Map Wins: {scoreboard_data['map_wins']}\n"
-        f"Map Losses: {scoreboard_data['map_losses']}\n"
-        f"Map Win%: {get_map_win_percent(scoreboard_data['map_wins'],scoreboard_data['map_losses'])}\n"
-        f"@everyone"
-    )
+    def generate_scoreboard():
+        return (
+            f"**🏆 UGT {bot_name.capitalize()}'s Scoreboard**\n"
+            f"Wins: {scoreboard_data['wins']}\n"
+            f"Losses: {scoreboard_data['losses']}\n"
+            f"W/L Ratio: {get_ratio(scoreboard_data['wins'], scoreboard_data['losses'])}\n"
+            f"Map Wins: {scoreboard_data['map_wins']}\n"
+            f"Map Losses: {scoreboard_data['map_losses']}\n"
+            f"Map Win%: {get_map_win_percent(scoreboard_data['map_wins'], scoreboard_data['map_losses'])}\n"
+            f"@everyone"
+        )
 
-# Keep track of scoreboard messages
-scoreboard_message_id = None
+    async def update_scoreboard():
+        nonlocal scoreboard_message_id
+        channel = bot.get_channel(channel_id)
+        if channel and scoreboard_message_id:
+            try:
+                msg = await channel.fetch_message(scoreboard_message_id)
+                await msg.edit(content=generate_scoreboard())
+            except:
+                scoreboard_message_id = None
 
-# ---------------- BOT EVENTS ----------------
-@bot.event
-async def on_ready():
-    global scoreboard_message_id
-    print(f"✅ {bot.user} is online!")
+    @bot.event
+    async def on_ready():
+        nonlocal scoreboard_message_id
+        print(f"✅ {bot.user} is online!")
 
-    channel = bot.get_channel(SCOREBOARD["channel_id"])
-    if channel is None:
-        print(f"❌ Channel not found for {SCOREBOARD['name']}")
-        return
-
-    # Look for existing message
-    async for msg in channel.history(limit=10):
-        if msg.author == bot.user and f"**🏆 UGT {SCOREBOARD['name'].capitalize()}'s Scoreboard**" in msg.content:
+        channel = bot.get_channel(channel_id)
+        async for msg in channel.history(limit=10):
+            if msg.author == bot.user and f"**🏆 UGT {bot_name.capitalize()}'s Scoreboard**" in msg.content:
+                scoreboard_message_id = msg.id
+                break
+        if scoreboard_message_id is None:
+            msg = await channel.send(generate_scoreboard())
             scoreboard_message_id = msg.id
-            break
-    if scoreboard_message_id is None:
-        msg = await channel.send(generate_scoreboard())
-        scoreboard_message_id = msg.id
 
-    await tree.sync()
-    print(f"✅ Slash commands synced")
+        await tree.sync()
+        print(f"✅ Slash commands synced")
 
-# ---------------- COMMANDS ----------------
-@bot.command(name="add_maps")
-async def add_maps(ctx, map_wins: int, map_losses: int):
-    if not has_role(ctx.author):
-        await ctx.send("❌ No permission", delete_after=5)
-        return
-    scoreboard_data["map_wins"] += map_wins
-    scoreboard_data["map_losses"] += map_losses
-    scoreboard_data["wins"] += map_wins > map_losses
-    scoreboard_data["losses"] += map_wins < map_losses
-    save_scoreboard()
+        # Optional: Add a delay after syncing to avoid rate-limiting
+        await asyncio.sleep(3)  # Sleep to space out requests
 
-    # Update message
-    channel = bot.get_channel(SCOREBOARD["channel_id"])
-    if channel:
-        try:
-            msg = await channel.fetch_message(scoreboard_message_id)
-            await msg.edit(content=generate_scoreboard())
-        except:
-            pass
+    group = app_commands.Group(name=bot_name, description=f"{bot_name.capitalize()} scoreboard commands")
+    tree.add_command(group)
 
-    await ctx.send("✅ Match added", delete_after=5)
+    @group.command(name="add_maps")
+    async def add_maps(interaction: discord.Interaction, map_wins: int, map_losses: int):
+        if not has_role(interaction.user):
+            await interaction.response.send_message("❌ No permission", ephemeral=True)
+            return
+        scoreboard_data["map_wins"] += map_wins
+        scoreboard_data["map_losses"] += map_losses
+        scoreboard_data["wins"] += map_wins > map_losses
+        scoreboard_data["losses"] += map_wins < map_losses
+        save_scoreboard()
 
-@bot.command(name="reset")
-async def reset_scoreboard(ctx):
-    if not is_admin(ctx.author):
-        await ctx.send("❌ Only admins can reset the scoreboard.", delete_after=5)
-        return
-    scoreboard_data.update({"wins": 0, "losses": 0, "map_wins": 0, "map_losses": 0})
-    save_scoreboard()
+        # Optional: Add a delay before updating scoreboard
+        await asyncio.sleep(1)  # Sleep before proceeding with the update
+        await update_scoreboard()
+        await interaction.response.send_message("✅ Match added", ephemeral=True)
 
-    # Update message
-    channel = bot.get_channel(SCOREBOARD["channel_id"])
-    if channel:
-        try:
-            msg = await channel.fetch_message(scoreboard_message_id)
-            await msg.edit(content=generate_scoreboard())
-        except:
-            pass
+    @group.command(name="reset")
+    async def reset_scoreboard(interaction: discord.Interaction):
+        if not is_admin(interaction.user):
+            await interaction.response.send_message("❌ Only admins can reset the scoreboard.", ephemeral=True)
+            return
+        scoreboard_data.update({"wins": 0, "losses": 0, "map_wins": 0, "map_losses": 0})
+        save_scoreboard()
 
-    await ctx.send("🧹 Scoreboard reset", delete_after=5)
+        # Optional: Add a delay before updating scoreboard
+        await asyncio.sleep(1)  # Sleep before proceeding with the update
+        await update_scoreboard()
+        await interaction.response.send_message("🧹 Scoreboard reset", ephemeral=True)
 
-# ---------------- START BOT ----------------
-bot.run(DISCORD_TOKEN)
+    return bot, config["token_env"]
+
+# ---------------- MAIN ----------------
+async def main():
+    tasks = []
+    for cfg in BOTS_CONFIG:
+        bot, token_env = create_bot(cfg)
+        token = os.getenv(token_env)
+        if not token:
+            print(f"⚠️ Token for {cfg['name']} not found in environment variables!")
+        tasks.append(asyncio.create_task(bot.start(token)))
+    await asyncio.gather(*tasks)
+
+asyncio.run(main())
